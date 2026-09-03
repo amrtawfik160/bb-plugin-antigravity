@@ -2,52 +2,60 @@
 
 Run bb threads on **Google Antigravity** over ACP.
 
-Antigravity's `agy` CLI communicates over an ACP stdio adapter. This plugin manages the `customAcpAgents` entry that points bb's ACP bridge at the adapter, normalizes models into clean model families (Gemini 3.8 Flash, Gemini 3.7 Flash, Gemini 3.6 Flash, Gemini 3.1 Pro, Claude Sonnet/Opus 4.6, GPT-OSS 120B), provides native reasoning effort selection (Low / Medium / High), and gives you a `bb antigravity` command to check and manage the integration.
+Antigravity's `agy` CLI talks to an ACP stdio adapter. This plugin downloads that adapter, points bb's ACP bridge at it, normalizes models into clean families (Gemini 3.8 Flash, Gemini 3.7 Flash, Gemini 3.6 Flash, Gemini 3.1 Pro, Claude Sonnet/Opus 4.6, GPT-OSS 120B), and exposes native reasoning effort (Low / Medium / High).
 
 ## Requirements
 
-| Tool | Purpose | Install |
-|---|---|---|
-| `agy` | Antigravity CLI, logged in | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` |
-| `agy-acp` | ACP adapter | [releases](https://github.com/shubzkothekar/antigravity-acp/releases) → `~/.local/bin/agy-acp`, then `chmod +x` |
+`agy` has to be installed and logged in. The plugin does not install Google's CLI for you.
 
-Both are found automatically on `PATH` plus standard install directories (`~/.local/bin`, Homebrew, pipx venvs). You can also override either in the plugin settings via `agyCommand` or `adapterCommand`.
+```bash
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+agy   # log in if it asks
+```
+
+`agy-acp` is downloaded into `~/.local/bin` the first time the plugin loads, or when you run `bb antigravity install`. You can still point `adapterCommand` at a binary you already have.
 
 ## Installation
 
 ```bash
-bb plugin install git:github.com/amrtawfik160/bb-plugin-antigravity
-bb antigravity enable
+bb plugin install git:github.com/amrtawfik160/bb-plugin-antigravity --yes
 ```
 
-## Usage
+That is the whole install. After it loads, `acp-antigravity` shows up in the provider picker. If `agy` is missing, the plugin stays in needs-configuration until you install it and reload.
 
-```bash
-bb antigravity status     # check provider registration and prerequisites
-bb antigravity doctor     # status + a live ACP handshake through the adapter
-bb antigravity enable     # write the config entry and reload bb
-bb antigravity disable    # remove the provider entry
-```
+On bb 0.41 the picker reads the builtin ACP plugin's `customAgents` setting. This plugin writes that setting itself. It also still writes `customAcpAgents` in `config.json` for older bb.
 
-After `enable`:
+Then:
 
 ```bash
 bb thread spawn --provider acp-antigravity --prompt "..."
 ```
 
-### Models & Reasoning Efforts
+## Usage
 
-Models are dynamically discovered and normalized from the ACP session:
+```bash
+bb antigravity status     # provider registration and prerequisites
+bb antigravity doctor     # status plus a live ACP handshake
+bb antigravity install    # download agy-acp if needed and register the provider
+bb antigravity enable     # register (also downloads agy-acp if it is missing)
+bb antigravity disable    # remove the provider; auto-setup will not put it back
+```
 
-- **Gemini 3.8 Flash** (Reasoning: *Low*, *Medium*, *High* — Default: *High*)
-- **Gemini 3.7 Flash** (Reasoning: *Low*, *Medium*, *High* — Default: *High*)
-- **Gemini 3.6 Flash** (Reasoning: *Low*, *Medium*, *High* — Default: *High*)
-- **Gemini 3.1 Pro** (Reasoning: *Low*, *High* — Default: *High*)
+`disable` is sticky across reloads so the plugin does not immediately re-register. `enable` or `install` clears that.
+
+There is a settings panel under **Extensions → Plugins → Antigravity**.
+
+### Models and reasoning
+
+Models come from the ACP session and are normalized into:
+
+- **Gemini 3.8 Flash** (Reasoning: Low, Medium, High — default High)
+- **Gemini 3.7 Flash** (Reasoning: Low, Medium, High — default High)
+- **Gemini 3.6 Flash** (Reasoning: Low, Medium, High — default High)
+- **Gemini 3.1 Pro** (Reasoning: Low, High — default High)
 - **Claude Sonnet 4.6 (Thinking)**
 - **Claude Opus 4.6 (Thinking)**
 - **GPT-OSS 120B (Medium)**
-
-There is also a settings panel under **Extensions → Plugins → Antigravity** showing provider status with Enable / Disable / Refresh buttons.
 
 ## Settings
 

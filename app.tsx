@@ -22,6 +22,7 @@ interface StatusShape {
   agyMissing: boolean;
   adapterMissing: boolean;
   adapterPath?: string;
+  pickerRegistered?: boolean;
   drift?: string;
   agy?: {
     path: string;
@@ -97,7 +98,7 @@ function AntigravityPanel() {
     );
   }
 
-  const blocked = status.agyMissing || status.adapterMissing;
+  const blocked = status.agyMissing;
 
   return (
     <Card>
@@ -108,8 +109,14 @@ function AntigravityPanel() {
         <div className="space-y-0.5">
           <Row
             label="Provider"
-            value={`${status.providerId} — ${status.enabled ? "registered" : "not registered"}`}
-            tone={status.enabled ? "good" : "normal"}
+            value={`${status.providerId} — ${
+              status.pickerRegistered === true || status.enabled
+                ? "in picker"
+                : "not registered"
+            }`}
+            tone={
+              status.pickerRegistered === true || status.enabled ? "good" : "normal"
+            }
           />
           <Row label="Transport" value={status.transport} />
           <Row
@@ -153,9 +160,8 @@ function AntigravityPanel() {
           </p>
         ) : null}
         {status.adapterMissing ? (
-          <p className="text-xs text-muted-foreground font-mono break-all">
-            Download agy-acp from
-            github.com/shubzkothekar/antigravity-acp/releases into ~/.local/bin
+          <p className="text-xs text-muted-foreground">
+            Enable downloads agy-acp into ~/.local/bin automatically.
           </p>
         ) : null}
 

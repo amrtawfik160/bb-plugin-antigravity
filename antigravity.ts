@@ -8,6 +8,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 
+import { installAdapter, type AdapterInstallResult } from "./adapter-install.js";
 import {
   type CustomAcpAgent,
   type RawConfig,
@@ -28,6 +29,13 @@ import {
   probeAdapterHandshake,
   probeAgy,
 } from "./discover.js";
+import {
+  type PluginSettingsClient,
+  customAgentsHas,
+  readProviderAcpAgents,
+  removeProviderAcpAgent,
+  upsertProviderAcpAgent,
+} from "./provider-acp-agents.js";
 
 export const AGY_BINARY = "agy";
 /**
@@ -42,11 +50,11 @@ export const AGY_BINARY = "agy";
  * contains an absolute-looking token plus a word like "create" — which bb's
  * injected instructions always do. See README.md.
  */
-export const ADAPTER_BINARIES = ["agy-acp", "agy-agent-acp"] as const;
+export const ADAPTER_BINARIES = ["agy-acp", "agy-acp.exe", "agy-agent-acp"] as const;
 export const ADAPTER_BINARY = ADAPTER_BINARIES[0];
 export const ADAPTER_INSTALL_HINT =
-  "Download agy-acp from https://github.com/shubzkothekar/antigravity-acp/releases " +
-  "into ~/.local/bin and chmod +x it";
+  "The plugin downloads agy-acp into ~/.local/bin on enable. " +
+  "To do it yourself: https://github.com/shubzkothekar/antigravity-acp/releases";
 export const LOGO_FILE_NAME = "antigravity-acp.svg";
 export const SHIM_FILE_NAME = "antigravity-acp-shim.mjs";
 
@@ -243,6 +251,8 @@ export interface Status {
   agyMissing: boolean;
   adapterPath?: string;
   adapterMissing: boolean;
+  /** True when provider-acp's customAgents setting contains this agent. */
+  pickerRegistered?: boolean;
   /** The entry currently in config.json, if any. */
   entry?: CustomAcpAgent;
   /** Set when the on-disk entry no longer matches current settings. */
@@ -252,21 +262,35 @@ export interface Status {
 export async function readStatus(
   options: Options,
   dataDir: string,
-  { probeAuth = true }: { probeAuth?: boolean } = {},
+  {
+    probeAuth = true,
+    registry,
+  }: { probeAuth?: boolean; registry?: PluginSettingsClient } = {},
 ): Promise<Status> {
   const configPath = resolveConfigPath(dataDir);
   const config = await readConfig(configPath);
   const entry = findAgent(config, options.agentId);
   const resolved = await resolveExecutables(options);
 
+  let pickerRegistered: boolean | undefined;
+  if (registry) {
+    try {
+      const agents = await readProviderAcpAgents(registry);
+      pickerRegistered = customAgentsHas(agents, options.agentId);
+    } catch {
+      pickerRegistered = false;
+    }
+  }
+
   const status: Status = {
     providerId: toProviderId(options.agentId),
     dataDir,
     configPath,
-    enabled: entry !== undefined,
+    enabled: entry !== undefined || pickerRegistered === true,
     transport: options.transport,
     agyMissing: resolved.agyPath === undefined,
     adapterMissing: resolved.adapterPath === undefined,
+    ...(pickerRegistered !== undefined ? { pickerRegistered } : {}),
     ...(resolved.adapterPath ? { adapterPath: resolved.adapterPath } : {}),
     ...(entry ? { entry } : {}),
   };
@@ -323,6 +347,30 @@ export interface ApplyResult {
   entry: CustomAcpAgent;
   reloaded: boolean;
   reloadError?: string;
+  adapterInstall?: AdapterInstallResult;
+  pickerWrote?: boolean;
+}
+
+export interface EnableContext {
+  registry?: PluginSettingsClient;
+}
+
+async function resolveOrInstallAdapter(
+  options: Options,
+): Promise<{ resolved: Resolved; adapterInstall?: AdapterInstallResult }> {
+  let resolved = await resolveExecutables(options);
+  if (resolved.adapterPath || options.adapterCommand.trim()) {
+    return { resolved };
+  }
+  const adapterInstall = await installAdapter();
+  resolved = await resolveExecutables(options);
+  if (!resolved.adapterPath) {
+    resolved = {
+      ...resolved,
+      adapterPath: adapterInstall.path,
+    };
+  }
+  return { resolved, adapterInstall };
 }
 
 export async function enable(
@@ -330,8 +378,9 @@ export async function enable(
   dataDir: string,
   pluginRoot: string,
   reload: () => Promise<void>,
+  context: EnableContext = {},
 ): Promise<ApplyResult> {
-  const resolved = await resolveExecutables(options);
+  const { resolved, adapterInstall } = await resolveOrInstallAdapter(options);
   const shimPath = options.compatibilityShim
     ? await installShim(dataDir, pluginRoot)
     : undefined;
@@ -342,6 +391,12 @@ export async function enable(
   const config = await readConfig(configPath);
   await writeConfig(configPath, upsertAgent(config, entry));
 
+  let pickerWrote: boolean | undefined;
+  if (context.registry) {
+    const result = await upsertProviderAcpAgent(context.registry, entry);
+    pickerWrote = result.wrote;
+  }
+
   const { reloaded, reloadError } = await tryReload(reload);
   return {
     providerId: toProviderId(options.agentId),
@@ -349,6 +404,8 @@ export async function enable(
     entry,
     reloaded,
     ...(reloadError ? { reloadError } : {}),
+    ...(adapterInstall ? { adapterInstall } : {}),
+    ...(pickerWrote !== undefined ? { pickerWrote } : {}),
   };
 }
 
@@ -356,7 +413,14 @@ export async function disable(
   options: Options,
   dataDir: string,
   reload: () => Promise<void>,
-): Promise<{ removed: boolean; configPath: string; reloaded: boolean; reloadError?: string }> {
+  context: EnableContext = {},
+): Promise<{
+  removed: boolean;
+  pickerRemoved?: boolean;
+  configPath: string;
+  reloaded: boolean;
+  reloadError?: string;
+}> {
   const configPath = resolveConfigPath(dataDir);
   const config = await readConfig(configPath);
   const next: RawConfig = removeAgent(config, options.agentId);
@@ -364,14 +428,76 @@ export async function disable(
   if (removed) {
     await writeConfig(configPath, next);
   }
-  const { reloaded, reloadError } = removed
+
+  let pickerRemoved: boolean | undefined;
+  if (context.registry) {
+    const result = await removeProviderAcpAgent(context.registry, options.agentId);
+    pickerRemoved = result.removed;
+  }
+
+  const changed = removed || pickerRemoved === true;
+  const { reloaded, reloadError } = changed
     ? await tryReload(reload)
     : { reloaded: false, reloadError: undefined };
   return {
-    removed,
+    removed: changed,
+    ...(pickerRemoved !== undefined ? { pickerRemoved } : {}),
     configPath,
     reloaded,
     ...(reloadError ? { reloadError } : {}),
+  };
+}
+
+export interface BootstrapResult {
+  skipped: boolean;
+  reason?: string;
+  apply?: ApplyResult;
+  status: Status;
+}
+
+/**
+ * Download the adapter if needed and register the provider. Used on plugin
+ * load so `bb plugin install` is the only step.
+ */
+export async function bootstrap(
+  options: Options,
+  dataDir: string,
+  pluginRoot: string,
+  reload: () => Promise<void>,
+  context: EnableContext = {},
+): Promise<BootstrapResult> {
+  const { adapterInstall } = await resolveOrInstallAdapter(options).catch(
+    (error: unknown) => {
+      throw new Error(
+        `Could not install the ACP adapter: ${(error as Error).message}`,
+      );
+    },
+  );
+  const status = await readStatus(options, dataDir, {
+    probeAuth: false,
+    registry: context.registry,
+  });
+  if (status.agyMissing) {
+    return {
+      skipped: true,
+      reason: `agy CLI is missing. Install it with \`curl -fsSL https://antigravity.google/cli/install.sh | bash\`, then run \`bb antigravity enable\`.`,
+      status: {
+        ...status,
+        ...(adapterInstall ? { adapterPath: adapterInstall.path, adapterMissing: false } : {}),
+      },
+    };
+  }
+  if (status.enabled && !status.drift && status.pickerRegistered !== false) {
+    return { skipped: true, reason: "already registered", status };
+  }
+  const apply = await enable(options, dataDir, pluginRoot, reload, context);
+  return {
+    skipped: false,
+    apply,
+    status: await readStatus(options, dataDir, {
+      probeAuth: false,
+      registry: context.registry,
+    }),
   };
 }
 
@@ -403,8 +529,9 @@ export async function doctor(
   options: Options,
   dataDir: string,
   pluginRoot: string,
+  context: EnableContext = {},
 ): Promise<DoctorReport> {
-  const status = await readStatus(options, dataDir);
+  const status = await readStatus(options, dataDir, { registry: context.registry });
   const resolved = await resolveExecutables(options);
   if (!resolved.adapterPath) {
     return { status };
