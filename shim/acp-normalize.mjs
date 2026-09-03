@@ -12,6 +12,11 @@
 // 4. Answers `models` CLI invocations with clean `id - Name` lines.
 
 import { spawn, execFileSync } from "node:child_process";
+import {
+  CONTINUE_PROMPT,
+  PromptTurn,
+  autoContinueEnabled,
+} from "./continue-policy.mjs";
 
 const args = process.argv.slice(2);
 
@@ -282,6 +287,85 @@ const child = spawn(adapterPath, adapterArgs, {
   stdio: ["pipe", "pipe", "inherit"],
 });
 
+// agy-acp runs `agy -p` per prompt and returns end_turn when the process
+// exits. Antigravity often yields after starting a background command.
+// Hold the original session/prompt RPC open and nudge the same session
+// until the last assistant text no longer looks like a yield.
+let promptTurn = null;
+let promptOrigin = null;
+let continueSeq = 0;
+
+function isContinueId(id) {
+  return typeof id === "string" && id.startsWith("bb-antigravity-continue-");
+}
+
+function sendContinue(sessionId) {
+  continueSeq += 1;
+  const id = `bb-antigravity-continue-${continueSeq}`;
+  child.stdin.write(
+    `${JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      method: "session/prompt",
+      params: {
+        sessionId,
+        prompt: [{ type: "text", text: CONTINUE_PROMPT }],
+      },
+    })}\n`,
+  );
+  process.stderr.write(
+    `acp-normalize: auto-continue ${promptTurn?.count ?? 0} for session ${sessionId}\n`,
+  );
+}
+
+function handleInboundMessage(message) {
+  if (message.method === "session/prompt" && !isContinueId(message.id)) {
+    promptOrigin = {
+      id: message.id,
+      sessionId: message.params?.sessionId,
+    };
+    promptTurn = new PromptTurn();
+  }
+  if (message.method === "session/cancel") {
+    promptTurn = null;
+    promptOrigin = null;
+  }
+}
+
+function rewriteOutbound(message) {
+  const update = message.params?.update;
+  if (message.method === "session/update" && update) {
+    const text = update.content?.text;
+    if (update.sessionUpdate === "agent_message_chunk" && typeof text === "string") {
+      promptTurn?.onAgentText(text);
+    }
+    if (typeof text === "string" && text.includes(CONTINUE_PROMPT)) {
+      return null;
+    }
+  }
+
+  const isPromptReply =
+    message.id !== undefined &&
+    promptOrigin !== null &&
+    (message.id === promptOrigin.id || isContinueId(message.id));
+  if (!isPromptReply) return message;
+
+  const stopReason = message.result?.stopReason;
+  if (
+    autoContinueEnabled() &&
+    promptTurn &&
+    promptOrigin.sessionId &&
+    !message.error &&
+    promptTurn.shouldContinue(stopReason)
+  ) {
+    promptTurn.markContinued();
+    sendContinue(promptOrigin.sessionId);
+    return null;
+  }
+
+  return { ...message, id: promptOrigin.id };
+}
+
 child.on("error", (error) => {
   process.stderr.write(`acp-normalize: cannot spawn ${adapterPath}: ${error.message}\n`);
   process.exit(127);
@@ -297,6 +381,13 @@ process.stdin.on("data", (chunk) => {
     const line = inBuffer.slice(0, newline);
     inBuffer = inBuffer.slice(newline + 1);
     const normalized = line.length > 0 ? normalizeInboundLine(line) : line;
+    if (normalized.length > 0) {
+      try {
+        handleInboundMessage(JSON.parse(normalized));
+      } catch {
+        // pass-through of a non-JSON line
+      }
+    }
     child.stdin.write(`${normalized}\n`);
     newline = inBuffer.indexOf("\n");
   }
@@ -321,7 +412,18 @@ child.stdout.on("data", (chunk) => {
     const line = outBuffer.slice(0, newline);
     outBuffer = outBuffer.slice(newline + 1);
     const normalized = line.length > 0 ? normalizeOutboundLine(line) : line;
-    process.stdout.write(`${normalized}\n`);
+    if (normalized.length > 0) {
+      let outbound = normalized;
+      let drop = false;
+      try {
+        const rewritten = rewriteOutbound(JSON.parse(normalized));
+        if (rewritten === null) drop = true;
+        else outbound = JSON.stringify(rewritten);
+      } catch {
+        // keep the normalized line
+      }
+      if (!drop) process.stdout.write(`${outbound}\n`);
+    }
     newline = outBuffer.indexOf("\n");
   }
 });

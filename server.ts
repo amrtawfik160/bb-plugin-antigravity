@@ -120,6 +120,15 @@ export default async function plugin(bb: BbPluginApi) {
         "Wrap the adapter to normalize models into clean families and provide native " +
         "reasoning effort (Low / Medium / High) in the composer picker.",
     },
+    autoContinue: {
+      type: "boolean",
+      label: "Auto-continue when Antigravity yields",
+      default: true,
+      description:
+        "agy-acp ends the ACP turn when print-mode agy exits. If the last " +
+        "assistant text says it is waiting on background work, send Continue on " +
+        "the same session instead of going idle.",
+    },
   });
 
   async function options(): Promise<Options> {
@@ -131,6 +140,7 @@ export default async function plugin(bb: BbPluginApi) {
       adapterCommand: current.adapterCommand,
       agyCommand: current.agyCommand,
       compatibilityShim: current.compatibilityShim,
+      autoContinue: current.autoContinue,
     };
   }
 
@@ -379,6 +389,20 @@ export default async function plugin(bb: BbPluginApi) {
         bb.status.needsConfiguration(message);
       }
     },
+  });
+
+  bb.agents.configure((context) => {
+    if (context.provider.id !== "acp-antigravity") {
+      return { tools: [], skills: [] };
+    }
+    return {
+      tools: [],
+      skills: [],
+      instructions:
+        "You are running through ACP print-mode (`agy -p`). That process exits as soon as you yield. " +
+        "Do not stop because a command, test, screenshot, or background task is still running. " +
+        "Wait for it, then keep going until the user's original task is finished.",
+    };
   });
 
   bb.log.info(

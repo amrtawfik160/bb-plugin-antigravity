@@ -69,6 +69,8 @@ export interface Options {
   adapterCommand: string;
   /** Wrap the adapter to normalize non-spec ACP shapes. Only agy-agent-acp needs it. */
   compatibilityShim: boolean;
+  /** Nudge the same ACP session when agy -p yields on background work. */
+  autoContinue: boolean;
 }
 
 export interface Resolved {
@@ -104,6 +106,7 @@ export async function resolveExecutables(
     // that 404s, instead of using the installed CLI and its credentials.
     launchEnv.AGY_BIN = agyPath;
   }
+  launchEnv.AGY_ACP_AUTO_CONTINUE = options.autoContinue === false ? "0" : "1";
 
   return {
     ...(agyPath ? { agyPath } : {}),
@@ -216,6 +219,16 @@ export async function installShim(
   if (!copied) {
     throw new Error(
       `Could not install the ACP compatibility shim into ${destination}.`,
+    );
+  }
+  const policyCopied = await copyAsset(
+    pluginRoot,
+    path.join("shim", "continue-policy.mjs"),
+    path.join(dataDir, "continue-policy.mjs"),
+  );
+  if (!policyCopied) {
+    throw new Error(
+      `Could not install continue-policy.mjs next to ${destination}.`,
     );
   }
   return destination;

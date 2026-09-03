@@ -43,6 +43,8 @@ bb antigravity disable    # remove the provider; auto-setup will not put it back
 
 `disable` is sticky across reloads so the plugin does not immediately re-register. `enable` or `install` clears that.
 
+agy-acp runs each turn as `agy -p`, which exits when the model yields — including when it starts a screenshot, test, or other background job and says it will look later. With `autoContinue` on (the default), the shim keeps that ACP turn open and sends Continue on the same session so the thread does not go idle.
+
 There is a settings panel under **Extensions → Plugins → Antigravity**.
 
 ### Models and reasoning
@@ -67,6 +69,7 @@ Models come from the ACP session and are normalized into:
 | `adapterCommand` | *(auto)* | Absolute path to the ACP adapter (`agy-acp` or `agy-agent-acp`) |
 | `agyCommand` | *(auto)* | Absolute path to the `agy` CLI |
 | `compatibilityShim` | `true` | Normalizes models into clean families and bridges native reasoning effort |
+| `autoContinue` | `true` | When Antigravity yields on background work, keep the same ACP turn going instead of going idle |
 
 ## Development
 
