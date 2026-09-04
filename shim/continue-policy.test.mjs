@@ -27,18 +27,68 @@ test("a finished summary is not a yield", () => {
   );
 });
 
+test("background command launched and wait pattern is recognized", () => {
+  assert.equal(
+    looksLikeYield("I have launched the test:unit command and will wait for it to finish."),
+    true,
+  );
+  assert.equal(
+    looksLikeYield("I will wait for the typecheck command to finish."),
+    true,
+  );
+  assert.equal(
+    looksLikeYield("Wait for typecheck to complete"),
+    true,
+  );
+  assert.equal(
+    looksLikeYield("I will now edit the CategorySheet component."),
+    true,
+  );
+  assert.equal(
+    looksLikeYield("Let me check the implementation in CategorySheet.tsx."),
+    true,
+  );
+});
+
+test("PromptTurn auto-continues when turn ran tools but produced no agent text", () => {
+  const turn = new PromptTurn();
+  turn.onToolCall();
+  turn.onToolCall();
+  // No onAgentText called (like in thr_s47zevpizn where it was searching and thinking)
+  assert.equal(turn.shouldContinue("end_turn", null), true);
+});
+
+test("PromptTurn auto-continues when last event was a tool call", () => {
+  const turn = new PromptTurn();
+  turn.onAgentText("Checking files...");
+  turn.onToolCall();
+  assert.equal(turn.shouldContinue("end_turn", null), true);
+});
+
+test("PromptTurn auto-continues on agy error or timeout", () => {
+  const turn = new PromptTurn();
+  assert.equal(turn.shouldContinue("end_turn", "Error: timeout waiting for response"), true);
+});
+
+test("PromptTurn does not continue when turn is genuinely complete", () => {
+  const turn = new PromptTurn();
+  turn.onToolCall();
+  turn.onAgentText("I have completed all changes requested to the categories page and tests pass.");
+  assert.equal(turn.shouldContinue("end_turn", null), false);
+});
+
 test("PromptTurn auto-continues end_turn yields and stops after the cap", () => {
   const turn = new PromptTurn();
   turn.onAgentText("The background task is running. I will inspect the results once it finishes.");
-  assert.equal(turn.shouldContinue("end_turn", 2), true);
+  assert.equal(turn.shouldContinue("end_turn", null, 2), true);
   turn.markContinued();
   turn.onAgentText("Still waiting for the test.");
-  assert.equal(turn.shouldContinue("cancelled", 2), false);
+  assert.equal(turn.shouldContinue("cancelled", null, 2), false);
   turn.onAgentText(" I will report back as soon as the test finishes.");
-  assert.equal(turn.shouldContinue("end_turn", 2), true);
+  assert.equal(turn.shouldContinue("end_turn", null, 2), true);
   turn.markContinued();
   turn.onAgentText("I will report back as soon as the test finishes.");
-  assert.equal(turn.shouldContinue("end_turn", 2), false);
+  assert.equal(turn.shouldContinue("end_turn", null, 2), false);
 });
 
 test("auto-continue can be disabled with AGY_ACP_AUTO_CONTINUE=0", () => {

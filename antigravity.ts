@@ -107,6 +107,7 @@ export async function resolveExecutables(
     launchEnv.AGY_BIN = agyPath;
   }
   launchEnv.AGY_ACP_AUTO_CONTINUE = options.autoContinue === false ? "0" : "1";
+  launchEnv.AGY_EXTRA_ARGS = "--print-timeout 60m";
 
   return {
     ...(agyPath ? { agyPath } : {}),

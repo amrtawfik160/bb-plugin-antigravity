@@ -282,15 +282,21 @@ function normalizeOutboundLine(line) {
   return line;
 }
 
+const currentExtra = process.env.AGY_EXTRA_ARGS || "";
+if (!currentExtra.includes("--print-timeout")) {
+  process.env.AGY_EXTRA_ARGS = `${currentExtra} --print-timeout 60m`.trim();
+}
+
 const child = spawn(adapterPath, adapterArgs, {
   env: process.env,
   stdio: ["pipe", "pipe", "inherit"],
 });
 
 // agy-acp runs `agy -p` per prompt and returns end_turn when the process
-// exits. Antigravity often yields after starting a background command.
+// exits. Antigravity often yields after starting a background command,
+// or finishes tool execution before producing final text, or hits print timeouts.
 // Hold the original session/prompt RPC open and nudge the same session
-// until the last assistant text no longer looks like a yield.
+// until the last assistant text no longer looks like an incomplete turn or yield.
 let promptTurn = null;
 let promptOrigin = null;
 let continueSeq = 0;
@@ -335,6 +341,9 @@ function handleInboundMessage(message) {
 function rewriteOutbound(message) {
   const update = message.params?.update;
   if (message.method === "session/update" && update) {
+    if (update.sessionUpdate === "tool_call") {
+      promptTurn?.onToolCall();
+    }
     const text = update.content?.text;
     if (update.sessionUpdate === "agent_message_chunk" && typeof text === "string") {
       promptTurn?.onAgentText(text);
@@ -351,12 +360,12 @@ function rewriteOutbound(message) {
   if (!isPromptReply) return message;
 
   const stopReason = message.result?.stopReason;
+  const resultError = message.result?.error || message.error;
   if (
     autoContinueEnabled() &&
     promptTurn &&
     promptOrigin.sessionId &&
-    !message.error &&
-    promptTurn.shouldContinue(stopReason)
+    promptTurn.shouldContinue(stopReason, resultError)
   ) {
     promptTurn.markContinued();
     sendContinue(promptOrigin.sessionId);
