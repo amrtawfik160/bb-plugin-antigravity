@@ -25,6 +25,7 @@ import {
   doctor,
   enable,
   readStatus,
+  syncSkillsToGemini,
 } from "./antigravity.js";
 import { resolveDataDir } from "./config.js";
 import { findExecutable, findFirstExecutable } from "./discover.js";
@@ -377,12 +378,14 @@ export default async function plugin(bb: BbPluginApi) {
         }
         if (result.skipped) {
           bb.log.info(`auto-setup skipped (${result.reason ?? "already registered"})`);
+          await syncSkillsToGemini(dataDir);
           return;
         }
         bb.log.info(
           `auto-setup registered ${result.apply?.providerId}` +
             (result.apply?.adapterInstall?.downloaded ? " and downloaded agy-acp" : ""),
         );
+        await syncSkillsToGemini(dataDir);
       } catch (error) {
         const message = (error as Error).message;
         bb.log.warn(`auto-setup failed: ${message}`);
@@ -401,7 +404,10 @@ export default async function plugin(bb: BbPluginApi) {
       instructions:
         "You are running through ACP print-mode (`agy -p`). That process exits as soon as you yield. " +
         "Do not stop because a command, test, screenshot, or background task is still running. " +
-        "Wait for it, then keep going until the user's original task is finished.",
+        "Wait for it, then keep going until the user's original task is finished.\n\n" +
+        "MANDATORY SKILL POLICY: When the user's request matches any skill listed under 'Available bb skills' or Antigravity skills, " +
+        "you MUST read its SKILL.md instructions using `view_file` at its absolute path BEFORE taking any other action or writing code. " +
+        "Do not skip reading the skill — skills provide required conventions, commands, and rules for this environment.",
     };
   });
 

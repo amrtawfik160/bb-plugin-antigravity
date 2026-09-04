@@ -26,6 +26,7 @@ export function toCustomAgentsEntry(agent: CustomAcpAgent): Record<string, unkno
   if (agent.args && agent.args.length > 0) entry.args = agent.args;
   if (agent.env && Object.keys(agent.env).length > 0) entry.env = agent.env;
   if (agent.cwd) entry.cwd = agent.cwd;
+  if (agent.nativeSkillRoots) entry.nativeSkillRoots = agent.nativeSkillRoots;
   return entry;
 }
 

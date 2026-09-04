@@ -245,6 +245,43 @@ function normalizeInboundLine(line) {
     }
   }
 
+  if (method === "session/prompt" && Array.isArray(params?.prompt)) {
+    let modified = false;
+    const nextPrompt = params.prompt.map((part) => {
+      if (
+        typeof part?.text === "string" &&
+        part.text.includes("Available bb skills:") &&
+        !part.text.includes("<skills>")
+      ) {
+        const match = part.text.match(/Available bb skills:([\s\S]*?)(?:<\/system_instructions>|$)/);
+        if (match) {
+          modified = true;
+          const skillsList = match[1].trim();
+          const transformed = skillsList
+            .split("\n")
+            .map((l) => {
+              const m = l.match(/^-\s*([^:]+):\s*(.*?)\s*\(SKILL\.md:\s*([^)]+)\)/);
+              if (m) {
+                const [, name, desc, p] = m;
+                return `- ${name.trim()} (${p.trim()}): ${desc.trim()}`;
+              }
+              return l;
+            })
+            .join("\n");
+          const skillsBlock = `\n<skills>\nYou can use specialized 'skills' to help you with complex tasks. Each skill has a name and a description listed below.\n\nIf a skill seems relevant to your current task, you MUST read its SKILL.md instructions using view_file before proceeding. You may skip this step only if you are delegating the skill-related task to a subagent that will read and follow the instructions itself.\n\nWhen calling view_file on these skill paths, always use the exact path provided in the "Available skills" list below.\n\nAvailable skills:\n${transformed}\n</skills>\n`;
+          return { ...part, text: part.text + "\n" + skillsBlock };
+        }
+      }
+      return part;
+    });
+    if (modified) {
+      return JSON.stringify({
+        ...message,
+        params: { ...params, prompt: nextPrompt },
+      });
+    }
+  }
+
   return line;
 }
 

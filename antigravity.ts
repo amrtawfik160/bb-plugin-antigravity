@@ -7,6 +7,7 @@
 
 import path from "node:path";
 import fs from "node:fs/promises";
+import os from "node:os";
 
 import { installAdapter, type AdapterInstallResult } from "./adapter-install.js";
 import {
@@ -158,6 +159,15 @@ export function buildAgentEntry(
     command: launch.command,
     args: launch.args,
     env: resolved.launchEnv,
+    nativeSkillRoots: {
+      user: [
+        { path: ".gemini/skills", recursive: true },
+        { path: ".agents/skills", recursive: true },
+      ],
+      project: [
+        { path: ".agents/skills", recursive: true, ancestors: true },
+      ],
+    },
     ...(logoFileName ? { logo: logoFileName } : {}),
   };
 }
@@ -387,6 +397,57 @@ async function resolveOrInstallAdapter(
   return { resolved, adapterInstall };
 }
 
+/**
+ * Mirror BB global skills into ~/.gemini/skills so agy discovers them as
+ * first-class native Antigravity skills.
+ */
+export async function syncSkillsToGemini(dataDir: string): Promise<number> {
+  const geminiSkillsDir = path.join(os.homedir(), ".gemini", "skills");
+  try {
+    await fs.mkdir(geminiSkillsDir, { recursive: true });
+  } catch {}
+
+  let synced = 0;
+  const candidateDirs = [path.join(dataDir, "skills")];
+
+  const globalSkillsRoot = path.join(dataDir, "runtime", "global-skills");
+  try {
+    const subdirs = await fs.readdir(globalSkillsRoot, { withFileTypes: true });
+    for (const subdir of subdirs) {
+      if (subdir.isDirectory()) {
+        candidateDirs.push(path.join(globalSkillsRoot, subdir.name, "skills"));
+      }
+    }
+  } catch {}
+
+  for (const dir of candidateDirs) {
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+        const skillPath = path.join(dir, entry.name);
+        const skillMd = path.join(skillPath, "SKILL.md");
+        try {
+          await fs.access(skillMd);
+          const targetLink = path.join(geminiSkillsDir, entry.name);
+          try {
+            const stat = await fs.lstat(targetLink);
+            if (stat.isSymbolicLink()) {
+              await fs.unlink(targetLink);
+            }
+          } catch {}
+          try {
+            await fs.symlink(skillPath, targetLink);
+            synced += 1;
+          } catch {}
+        } catch {}
+      }
+    } catch {}
+  }
+
+  return synced;
+}
+
 export async function enable(
   options: Options,
   dataDir: string,
@@ -400,6 +461,8 @@ export async function enable(
     : undefined;
   const logo = await installLogo(dataDir, pluginRoot);
   const entry = buildAgentEntry(options, resolved, shimPath, logo);
+
+  await syncSkillsToGemini(dataDir);
 
   const configPath = resolveConfigPath(dataDir);
   const config = await readConfig(configPath);

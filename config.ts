@@ -18,6 +18,10 @@ export interface CustomAcpAgent {
   env?: Record<string, string>;
   cwd?: string;
   logo?: string;
+  nativeSkillRoots?: {
+    user?: Array<{ path: string; recursive?: boolean }>;
+    project?: Array<{ path: string; recursive?: boolean; ancestors?: boolean }>;
+  };
   supportsManualCompaction?: boolean;
 }
 
