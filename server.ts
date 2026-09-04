@@ -405,9 +405,10 @@ export default async function plugin(bb: BbPluginApi) {
         "You are running through ACP print-mode (`agy -p`). That process exits as soon as you yield. " +
         "Do not stop because a command, test, screenshot, or background task is still running. " +
         "Wait for it, then keep going until the user's original task is finished.\n\n" +
-        "MANDATORY SKILL POLICY: When the user's request matches any skill listed under 'Available bb skills' or Antigravity skills, " +
-        "you MUST read its SKILL.md instructions using `view_file` at its absolute path BEFORE taking any other action or writing code. " +
-        "Do not skip reading the skill — skills provide required conventions, commands, and rules for this environment.",
+        "MANDATORY SKILL POLICY: Before executing ANY search, read, command, or file-edit tools, check the Available skills list. " +
+        "If ANY skill matches the task domain (for example, UI/layout/mobile changes, antislop, unslop, bb CLI commands, workflows, or project conventions), " +
+        "you MUST read its SKILL.md instructions using `view_file` at its absolute path as your very first tool call. " +
+        "Do not skip reading the skill — do not write code or run search/edit tools without reading the governing skill first.",
     };
   });
 

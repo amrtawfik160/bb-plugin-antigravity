@@ -398,14 +398,46 @@ async function resolveOrInstallAdapter(
 }
 
 /**
- * Mirror BB global skills into ~/.gemini/skills so agy discovers them as
- * first-class native Antigravity skills.
+ * Mirror BB global skills into ~/.gemini/config/skills so agy discovers them natively.
+ * Also ensures ~/.gemini/skills points to ~/.gemini/config/skills for backward compatibility.
  */
 export async function syncSkillsToGemini(dataDir: string): Promise<number> {
+  const geminiConfigSkillsDir = path.join(os.homedir(), ".gemini", "config", "skills");
   const geminiSkillsDir = path.join(os.homedir(), ".gemini", "skills");
+
   try {
-    await fs.mkdir(geminiSkillsDir, { recursive: true });
+    await fs.mkdir(geminiConfigSkillsDir, { recursive: true });
   } catch {}
+
+  // Ensure ~/.gemini/skills is a symlink to ~/.gemini/config/skills
+  try {
+    const stat = await fs.lstat(geminiSkillsDir);
+    if (!stat.isSymbolicLink()) {
+      if (stat.isDirectory()) {
+        const entries = await fs.readdir(geminiSkillsDir);
+        for (const entry of entries) {
+          const src = path.join(geminiSkillsDir, entry);
+          const dst = path.join(geminiConfigSkillsDir, entry);
+          const s = await fs.lstat(src);
+          if (s.isDirectory() && !s.isSymbolicLink()) {
+            try {
+              await fs.access(dst);
+            } catch {
+              await fs.rename(src, dst);
+            }
+          }
+        }
+        await fs.rm(geminiSkillsDir, { recursive: true, force: true });
+      } else {
+        await fs.unlink(geminiSkillsDir);
+      }
+      await fs.symlink(geminiConfigSkillsDir, geminiSkillsDir);
+    }
+  } catch {
+    try {
+      await fs.symlink(geminiConfigSkillsDir, geminiSkillsDir);
+    } catch {}
+  }
 
   let synced = 0;
   const candidateDirs = [path.join(dataDir, "skills")];
@@ -420,8 +452,23 @@ export async function syncSkillsToGemini(dataDir: string): Promise<number> {
     }
   } catch {}
 
+  let realConfigDir: string;
+  try {
+    realConfigDir = await fs.realpath(geminiConfigSkillsDir);
+  } catch {
+    realConfigDir = geminiConfigSkillsDir;
+  }
+
   for (const dir of candidateDirs) {
     try {
+      let realDir: string;
+      try {
+        realDir = await fs.realpath(dir);
+      } catch {
+        realDir = dir;
+      }
+      if (realDir === realConfigDir) continue;
+
       const entries = await fs.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
@@ -429,7 +476,20 @@ export async function syncSkillsToGemini(dataDir: string): Promise<number> {
         const skillMd = path.join(skillPath, "SKILL.md");
         try {
           await fs.access(skillMd);
-          const targetLink = path.join(geminiSkillsDir, entry.name);
+          const targetLink = path.join(geminiConfigSkillsDir, entry.name);
+          let targetReal: string | null = null;
+          try {
+            targetReal = await fs.realpath(targetLink);
+          } catch {}
+          let sourceReal: string | null = null;
+          try {
+            sourceReal = await fs.realpath(skillPath);
+          } catch {}
+
+          if (targetReal && sourceReal && targetReal === sourceReal) {
+            continue;
+          }
+
           try {
             const stat = await fs.lstat(targetLink);
             if (stat.isSymbolicLink()) {

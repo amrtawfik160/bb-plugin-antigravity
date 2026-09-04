@@ -12,11 +12,48 @@
 // 4. Answers `models` CLI invocations with clean `id - Name` lines.
 
 import { spawn, execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import {
   CONTINUE_PROMPT,
   PromptTurn,
   autoContinueEnabled,
 } from "./continue-policy.mjs";
+
+function findCustomizationRoots(startDir) {
+  const roots = [];
+  if (!startDir || typeof startDir !== "string") return roots;
+  const home = os.homedir();
+  try {
+    let cur = path.resolve(startDir);
+    while (true) {
+      if (cur === home) break;
+      if (
+        fs.existsSync(path.join(cur, ".git")) ||
+        fs.existsSync(path.join(cur, ".agents", "skills")) ||
+        fs.existsSync(path.join(cur, "_agents", "skills"))
+      ) {
+        if (cur !== path.resolve(startDir) && !roots.includes(cur)) {
+          roots.push(cur);
+        }
+      }
+      const parent = path.dirname(cur);
+      if (parent === cur || parent === home) {
+        if (
+          parent !== home &&
+          (fs.existsSync(path.join(parent, ".git")) ||
+            fs.existsSync(path.join(parent, ".agents", "skills")))
+        ) {
+          if (!roots.includes(parent)) roots.push(parent);
+        }
+        break;
+      }
+      cur = parent;
+    }
+  } catch {}
+  return roots;
+}
 
 const args = process.argv.slice(2);
 
@@ -236,11 +273,33 @@ function normalizeInboundLine(line) {
   }
 
   if (method === "session/new" || method === "session/load" || method === "session/resume") {
+    let modified = false;
+    let nextParams = { ...params };
     if (params?.model) {
       const raw = composeRawId(params.model, activeEffort);
+      nextParams.model = raw;
+      modified = true;
+    }
+    const targetCwd = params?.cwd || process.cwd();
+    const repoRoots = findCustomizationRoots(targetCwd);
+    if (repoRoots.length > 0) {
+      const existing = Array.isArray(params?.additionalDirectories)
+        ? [...params.additionalDirectories]
+        : [];
+      for (const r of repoRoots) {
+        if (!existing.includes(r)) {
+          existing.push(r);
+          modified = true;
+        }
+      }
+      if (modified) {
+        nextParams.additionalDirectories = existing;
+      }
+    }
+    if (modified) {
       return JSON.stringify({
         ...message,
-        params: { ...params, model: raw },
+        params: nextParams,
       });
     }
   }
@@ -250,10 +309,10 @@ function normalizeInboundLine(line) {
     const nextPrompt = params.prompt.map((part) => {
       if (
         typeof part?.text === "string" &&
-        part.text.includes("Available bb skills:") &&
+        (part.text.includes("Available bb skills:") || part.text.includes("Available skills:")) &&
         !part.text.includes("<skills>")
       ) {
-        const match = part.text.match(/Available bb skills:([\s\S]*?)(?:<\/system_instructions>|$)/);
+        const match = part.text.match(/(?:Available bb skills:|Available skills:)([\s\S]*?)(?:<\/system_instructions>|$)/);
         if (match) {
           modified = true;
           const skillsList = match[1].trim();
@@ -268,7 +327,7 @@ function normalizeInboundLine(line) {
               return l;
             })
             .join("\n");
-          const skillsBlock = `\n<skills>\nYou can use specialized 'skills' to help you with complex tasks. Each skill has a name and a description listed below.\n\nIf a skill seems relevant to your current task, you MUST read its SKILL.md instructions using view_file before proceeding. You may skip this step only if you are delegating the skill-related task to a subagent that will read and follow the instructions itself.\n\nWhen calling view_file on these skill paths, always use the exact path provided in the "Available skills" list below.\n\nAvailable skills:\n${transformed}\n</skills>\n`;
+          const skillsBlock = `\n<skills>\nYou can use specialized 'skills' to help you with complex tasks. Each skill has a name and a description listed below.\n\nMANDATORY SKILL POLICY: Before executing ANY search, read, command, or file-edit tools, check the Available skills list. If ANY skill matches the task domain (for example, UI/layout/mobile changes, antislop, unslop, bb CLI commands, workflows, or project conventions), you MUST read its SKILL.md instructions using view_file as your very first tool call. Do NOT write code or take actions without reading the governing skill first.\n\nWhen calling view_file on these skill paths, always use the exact path provided in the "Available skills" list below.\n\nAvailable skills:\n${transformed}\n</skills>\n`;
           return { ...part, text: part.text + "\n" + skillsBlock };
         }
       }
@@ -319,10 +378,18 @@ function normalizeOutboundLine(line) {
   return line;
 }
 
+const initRoots = findCustomizationRoots(process.cwd());
 const currentExtra = process.env.AGY_EXTRA_ARGS || "";
-if (!currentExtra.includes("--print-timeout")) {
-  process.env.AGY_EXTRA_ARGS = `${currentExtra} --print-timeout 60m`.trim();
+let extraArgsStr = currentExtra;
+if (!extraArgsStr.includes("--print-timeout")) {
+  extraArgsStr = `${extraArgsStr} --print-timeout 60m`.trim();
 }
+for (const r of initRoots) {
+  if (!extraArgsStr.includes(r)) {
+    extraArgsStr = `${extraArgsStr} --add-dir ${r}`.trim();
+  }
+}
+process.env.AGY_EXTRA_ARGS = extraArgsStr;
 
 const child = spawn(adapterPath, adapterArgs, {
   env: process.env,
