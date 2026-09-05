@@ -433,12 +433,12 @@ function handleInboundMessage(message) {
     promptOrigin = {
       id: message.id,
       sessionId: message.params?.sessionId,
+      cancelled: false,
     };
     promptTurn = new PromptTurn();
   }
-  if (message.method === "session/cancel") {
-    promptTurn = null;
-    promptOrigin = null;
+  if (message.method === "session/cancel" && promptOrigin?.sessionId === message.params?.sessionId) {
+    promptOrigin.cancelled = true;
   }
 }
 
@@ -467,6 +467,7 @@ function rewriteOutbound(message) {
   const resultError = message.result?.error || message.error;
   if (
     autoContinueEnabled() &&
+    !promptOrigin.cancelled &&
     promptTurn &&
     promptOrigin.sessionId &&
     promptTurn.shouldContinue(stopReason, resultError)
@@ -476,7 +477,21 @@ function rewriteOutbound(message) {
     return null;
   }
 
-  return { ...message, id: promptOrigin.id };
+  const id = promptOrigin.id;
+  const exhausted = autoContinueEnabled() && !promptOrigin.cancelled &&
+    !resultError && promptTurn?.shouldContinue(stopReason, null, Infinity);
+  promptTurn = null;
+  promptOrigin = null;
+  if (exhausted) {
+    return {
+      jsonrpc: "2.0", id,
+      error: {
+        code: -32000,
+        message: "Antigravity stopped repeatedly without a final reply after automatic continuation. Send a follow-up to resume the task.",
+      },
+    };
+  }
+  return { ...message, id };
 }
 
 child.on("error", (error) => {

@@ -66,8 +66,8 @@ export class PromptTurn {
     // 1. If agy exited with an error (e.g. timeout or non-zero exit)
     if (error) return true;
 
-    // 2. If the turn ran tool calls but produced zero user-facing text
-    if (this.toolCallCount > 0 && this.lastText.trim().length === 0) {
+    // Print mode can exit silently even before emitting a tool call.
+    if (stopReason === "end_turn" && this.lastText.trim().length === 0) {
       return true;
     }
 
