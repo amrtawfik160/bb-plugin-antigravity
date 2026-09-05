@@ -398,7 +398,7 @@ async function resolveOrInstallAdapter(
 }
 
 /**
- * Mirror BB global skills into ~/.gemini/config/skills so agy discovers them natively.
+ * Mirror user and BB global skills into ~/.gemini/config/skills for native discovery.
  * Also ensures ~/.gemini/skills points to ~/.gemini/config/skills for backward compatibility.
  */
 export async function syncSkillsToGemini(dataDir: string): Promise<number> {
@@ -440,7 +440,12 @@ export async function syncSkillsToGemini(dataDir: string): Promise<number> {
   }
 
   let synced = 0;
-  const candidateDirs = [path.join(dataDir, "skills")];
+  const candidateDirs = [
+    path.join(os.homedir(), ".codex", "skills"),
+    path.join(os.homedir(), ".codex", "skills", ".system"),
+    path.join(os.homedir(), ".agents", "skills"),
+    path.join(dataDir, "skills"),
+  ];
 
   const globalSkillsRoot = path.join(dataDir, "runtime", "global-skills");
   try {
