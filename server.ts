@@ -29,6 +29,7 @@ import {
 } from "./antigravity.js";
 import { resolveDataDir } from "./config.js";
 import { findExecutable, findFirstExecutable } from "./discover.js";
+import { waitForProviderAcp } from "./provider-ready.js";
 
 const OPTED_OUT_KEY = "optedOut";
 
@@ -364,6 +365,7 @@ export default async function plugin(bb: BbPluginApi) {
         return;
       }
       try {
+        await waitForProviderAcp(registry, signal);
         const result = await bootstrap(
           await options(),
           dataDir,
@@ -387,6 +389,7 @@ export default async function plugin(bb: BbPluginApi) {
         );
         await syncSkillsToGemini(dataDir);
       } catch (error) {
+        if (signal.aborted) return;
         const message = (error as Error).message;
         bb.log.warn(`auto-setup failed: ${message}`);
         bb.status.needsConfiguration(message);
