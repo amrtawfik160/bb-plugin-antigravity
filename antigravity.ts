@@ -630,6 +630,9 @@ export async function bootstrap(
     };
   }
   if (status.enabled && !status.drift && status.pickerRegistered !== false) {
+    // The registration is unchanged, but a plugin update can ship a new shim.
+    // New ACP processes read the copy in the data dir, so refresh it.
+    if (options.compatibilityShim) await installShim(dataDir, pluginRoot);
     return { skipped: true, reason: "already registered", status };
   }
   const apply = await enable(options, dataDir, pluginRoot, reload, context);

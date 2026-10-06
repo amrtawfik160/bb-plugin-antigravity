@@ -405,6 +405,19 @@ let promptTurn = null;
 let promptOrigin = null;
 let continueSeq = 0;
 
+// After BB cancels during a hidden continue, agy-acp should answer that
+// continue with `cancelled`. If it does not, answer BB ourselves so the
+// thread does not wait forever.
+const CANCEL_REPLY_GRACE_MS = 10_000;
+let cancelGuard = null;
+
+function clearCancelGuard() {
+  if (cancelGuard !== null) {
+    clearTimeout(cancelGuard);
+    cancelGuard = null;
+  }
+}
+
 function isContinueId(id) {
   return typeof id === "string" && id.startsWith("bb-antigravity-continue-");
 }
@@ -430,15 +443,30 @@ function sendContinue(sessionId) {
 
 function handleInboundMessage(message) {
   if (message.method === "session/prompt" && !isContinueId(message.id)) {
+    clearCancelGuard();
     promptOrigin = {
       id: message.id,
       sessionId: message.params?.sessionId,
       cancelled: false,
+      continuing: false,
     };
     promptTurn = new PromptTurn();
   }
   if (message.method === "session/cancel" && promptOrigin?.sessionId === message.params?.sessionId) {
     promptOrigin.cancelled = true;
+    if (promptOrigin.continuing && cancelGuard === null) {
+      const origin = promptOrigin;
+      cancelGuard = setTimeout(() => {
+        cancelGuard = null;
+        if (promptOrigin !== origin) return;
+        promptTurn = null;
+        promptOrigin = null;
+        process.stderr.write("acp-normalize: agent did not answer cancel; closing the turn\n");
+        process.stdout.write(
+          `${JSON.stringify({ jsonrpc: "2.0", id: origin.id, result: { stopReason: "cancelled" } })}\n`,
+        );
+      }, CANCEL_REPLY_GRACE_MS);
+    }
   }
 }
 
@@ -457,8 +485,14 @@ function rewriteOutbound(message) {
     }
   }
 
+  // Agent requests (permission, fs) carry their own ids and a method.
+  const isResponse = message.id !== undefined && message.method === undefined;
+  if (isResponse && promptOrigin === null && isContinueId(message.id)) {
+    // A continue reply after its BB turn closed. BB never sent this id.
+    return null;
+  }
   const isPromptReply =
-    message.id !== undefined &&
+    isResponse &&
     promptOrigin !== null &&
     (message.id === promptOrigin.id || isContinueId(message.id));
   if (!isPromptReply) return message;
@@ -473,9 +507,11 @@ function rewriteOutbound(message) {
     promptTurn.shouldContinue(stopReason, resultError)
   ) {
     promptTurn.markContinued();
+    promptOrigin.continuing = true;
     sendContinue(promptOrigin.sessionId);
     return null;
   }
+  clearCancelGuard();
 
   const id = promptOrigin.id;
   const exhausted = autoContinueEnabled() && !promptOrigin.cancelled &&
@@ -571,6 +607,9 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
 
 child.on("exit", (code, signal) => {
   if (signal) {
+    // Our own forwarding handler would swallow the re-raised signal and keep
+    // the shim alive. Drop it so the shim exits the way the adapter did.
+    process.removeAllListeners(signal);
     process.kill(process.pid, signal);
     return;
   }
