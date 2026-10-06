@@ -99,3 +99,32 @@ test("auto-continue can be disabled with AGY_ACP_AUTO_CONTINUE=0", () => {
 test("continue prompt is a single user nudge, not empty", () => {
   assert.ok(CONTINUE_PROMPT.includes("Continue"));
 });
+
+test("a worker that stands by for review is not a yield", () => {
+  const text =
+    "### Status: PAUSED — Standing By for Independent Final Review\n\nCI: 14 checks passed, 3 pending (waiting for review).\n\nStanding by to address any scoped findings. Firstmate owns the guarded merge.";
+  assert.equal(looksLikeYield(text), false);
+});
+
+test("a wait on a person or a review is not a yield", () => {
+  assert.equal(looksLikeYield("Done. Waiting for your review before I merge."), false);
+  assert.equal(looksLikeYield("Logged needs-decision. Waiting on Firstmate's steer."), false);
+});
+
+test("only the end of the message decides", () => {
+  const text = `I started the build in the background.\n\n${"Details. ".repeat(100)}\n\nAll tests passed.`;
+  assert.equal(looksLikeYield(text), false);
+});
+
+test("PromptTurn does not retry quota, sign-in, or bad-model errors", () => {
+  const turn = new PromptTurn();
+  for (const error of [
+    "Internal error: agy failed: error: Individual quota reached. Please upgrade your subscription.",
+    { code: -32603, message: "RESOURCE_EXHAUSTED (code 429)" },
+    "You are not logged into Antigravity.",
+    { code: -32602, message: "Invalid params", data: "Invalid model value: x" },
+  ]) {
+    assert.equal(turn.shouldContinue("end_turn", error), false, JSON.stringify(error));
+  }
+  assert.equal(turn.shouldContinue("end_turn", "Error: timeout waiting for response"), true);
+});

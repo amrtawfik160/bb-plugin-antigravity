@@ -32,11 +32,37 @@ const YIELD_PATTERNS = [
   /\bi\s+am\s+(?:now\s+)?(?:checking|looking|investigating|running|analyzing|working\s+on|proceeding)\b/i,
 ];
 
+// A worker that hands off to a person or another agent is done with its turn.
+// Continuing it burns a full agy run and holds the BB turn open.
+const HANDOFF_PATTERNS = [
+  /\bstanding\s+by\b/i,
+  /\bawait(?:ing)?\s+(?:your|new|further|the\s+user['’]s|firstmate['’]?s?|captain['’]?s?)\s+(?:orders|instructions|input|decision|direction|reply|review|steer)/i,
+  /\bwaiting\s+(?:for|on)\s+(?:your|the\s+user|firstmate|the\s+captain|approval|review|a\s+decision|instructions|orders|input|confirmation)\b/i,
+  /\bneeds?[- ]decision\b/i,
+];
+
+// Only the end of the final message decides. Earlier text often narrates work
+// that has since finished.
+const YIELD_TAIL_CHARS = 600;
+
+// Retrying cannot fix these. Continuing would replay the same failure.
+const TERMINAL_ERROR =
+  /quota|RESOURCE_EXHAUSTED|\b429\b|rate.?limit|upgrade your (?:plan|subscription)|not logged in|unauthori[sz]ed|permission denied|invalid (?:params|model)/i;
+
 export function looksLikeYield(text) {
   if (typeof text !== "string") return false;
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return false;
-  return YIELD_PATTERNS.some((pattern) => pattern.test(trimmed));
+  const tail = text.trim().slice(-YIELD_TAIL_CHARS);
+  if (tail.length === 0) return false;
+  if (HANDOFF_PATTERNS.some((pattern) => pattern.test(tail))) return false;
+  return YIELD_PATTERNS.some((pattern) => pattern.test(tail));
+}
+
+function errorText(error) {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    return [error.message, typeof error.data === "string" ? error.data : JSON.stringify(error.data ?? "")].join(" ");
+  }
+  return "";
 }
 
 export class PromptTurn {
@@ -64,7 +90,7 @@ export class PromptTurn {
     if (stopReason === "cancelled") return false;
 
     // 1. If agy exited with an error (e.g. timeout or non-zero exit)
-    if (error) return true;
+    if (error) return !TERMINAL_ERROR.test(errorText(error));
 
     // Print mode can exit silently even before emitting a tool call.
     if (stopReason === "end_turn" && this.lastText.trim().length === 0) {
