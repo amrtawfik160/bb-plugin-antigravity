@@ -232,18 +232,21 @@ export async function installShim(
       `Could not install the ACP compatibility shim into ${destination}.`,
     );
   }
-  const policyCopied = await copyAsset(
-    pluginRoot,
-    path.join("shim", "continue-policy.mjs"),
-    path.join(dataDir, "continue-policy.mjs"),
-  );
-  if (!policyCopied) {
-    throw new Error(
-      `Could not install continue-policy.mjs next to ${destination}.`,
+  // Modules the shim imports; they must sit next to it in the data dir.
+  for (const helper of SHIM_HELPER_FILES) {
+    const helperCopied = await copyAsset(
+      pluginRoot,
+      path.join("shim", helper),
+      path.join(dataDir, helper),
     );
+    if (!helperCopied) {
+      throw new Error(`Could not install ${helper} next to ${destination}.`);
+    }
   }
   return destination;
 }
+
+export const SHIM_HELPER_FILES = ["continue-policy.mjs", "model-families.mjs"] as const;
 
 /**
  * `pluginRoot` is the directory of the loaded module: the plugin root when bb

@@ -2,7 +2,7 @@
 
 Run bb threads on **Google Antigravity** over ACP.
 
-Antigravity's `agy` CLI talks to an ACP stdio adapter. This plugin downloads that adapter, points bb's ACP bridge at it, normalizes models into clean families (Gemini 3.8 Flash, Gemini 3.7 Flash, Gemini 3.6 Flash, Gemini 3.1 Pro, Claude Sonnet/Opus 4.6, GPT-OSS 120B), and exposes native reasoning effort (Low / Medium / High).
+Antigravity's `agy` CLI talks to an ACP stdio adapter. This plugin downloads that adapter, points bb's ACP bridge at it, groups the models `agy` offers into clean families (Gemini 4 Argon, Claude Opus 5.5, …), and exposes native reasoning effort (Low / Medium / High / Max, as each model supports).
 
 ## Requirements
 
@@ -49,15 +49,11 @@ There is a settings panel under **Extensions → Plugins → Antigravity**.
 
 ### Models and reasoning
 
-Models come from the ACP session and are normalized into:
+Models come from the ACP session: whatever `agy models` lists is what the picker shows, so new models appear without a plugin update. Variants that differ only by effort suffix (`-max`, `-high`, `-medium`, `-low`) collapse into one model with a **Reasoning Effort** selector. For example, `opus-5.5-max` … `opus-5.5-low` become **Claude Opus 5.5** with Max / High / Medium / Low. Models with a single variant (such as `gemini-3.5-flash-lite`) are listed as-is, with no effort selector.
 
-- **Gemini 3.8 Flash** (Reasoning: Low, Medium, High — default High)
-- **Gemini 3.7 Flash** (Reasoning: Low, Medium, High — default High)
-- **Gemini 3.6 Flash** (Reasoning: Low, Medium, High — default High)
-- **Gemini 3.1 Pro** (Reasoning: Low, High — default High)
-- **Claude Sonnet 4.6 (Thinking)**
-- **Claude Opus 4.6 (Thinking)**
-- **GPT-OSS 120B (Medium)**
+The shim caches the discovered list in `~/.bb/antigravity-acp-models.json`, so a new session can translate a selection before the adapter answers. Set `AGY_ACP_MODEL_CACHE` to move it.
+
+After changing `compatibilityShim`, run `bb antigravity enable` to re-register the provider with the new launch command.
 
 ## Settings
 
