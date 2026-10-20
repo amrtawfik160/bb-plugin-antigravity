@@ -1,4 +1,4 @@
-// Download the shubzkothekar/antigravity-acp stdio adapter into ~/.local/bin.
+// Download the mturilin/antigravity-acp stdio adapter (a fork of shubzkothekar/antigravity-acp that adds session/fork) into ~/.local/bin.
 //
 // agy has no ACP mode of its own. This binary is the missing piece, and it is
 // the one users otherwise have to hunt for on GitHub Releases.
@@ -12,9 +12,9 @@ import { pipeline } from "node:stream/promises";
 
 import { isExecutable } from "./config.js";
 
-export const ADAPTER_REPO = "shubzkothekar/antigravity-acp";
+export const ADAPTER_REPO = "mturilin/antigravity-acp";
 /** Used when the live "latest" redirect is unreachable. */
-export const ADAPTER_PINNED_TAG = "v1.1.0";
+export const ADAPTER_PINNED_TAG = "v1.3.0";
 export const ADAPTER_RELEASES =
   `https://github.com/${ADAPTER_REPO}/releases`;
 

@@ -2,9 +2,10 @@
 // A stdio pass-through and normalizer for Antigravity ACP in bb.
 //
 // 1. Normalizes models and reasoning efforts into clean model families
-//    (Gemini 3.8 Flash, Gemini 3.7 Flash, Gemini 3.6 Flash, Gemini 3.1 Pro, etc.)
-//    paired with a native `thought_level` config option (Low, Medium, High).
-//    This eliminates duplicate reasoning tags ("Gemini 3.7 Flash High Medium") in the UI.
+//    paired with a native `thought_level` config option. Families are derived
+//    from the model list agy-acp reports (see model-families.mjs), so new
+//    models show up without a plugin release. This eliminates duplicate
+//    reasoning tags ("Claude Opus 5.5 (High) Medium") in the UI.
 // 2. Maps `session/set_config_option` for both model and thought_level back
 //    to the underlying raw variant ids (`gemini-3.8-flash-high`, etc.).
 // 3. Normalizes `session/new` model arrays to `{ currentModelId, availableModels }`
@@ -20,6 +21,7 @@ import {
   PromptTurn,
   autoContinueEnabled,
 } from "./continue-policy.mjs";
+import { DEFAULT_CACHE_PATH, ModelCatalog } from "./model-families.mjs";
 
 function findCustomizationRoots(startDir) {
   const roots = [];
@@ -86,75 +88,30 @@ if (!adapterPath) {
   process.exit(64);
 }
 
-const FAMILIES = [
-  { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", efforts: ["high", "medium", "low"], defaultEffort: "high" },
-  { id: "gemini-3.7-flash", name: "Gemini 3.7 Flash", efforts: ["high", "medium", "low"], defaultEffort: "high" },
-  { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash", efforts: ["high", "medium", "low"], defaultEffort: "high" },
-  { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro", efforts: ["high", "low"], defaultEffort: "high" },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Thinking)", efforts: ["medium"], defaultEffort: "medium" },
-  { id: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)", efforts: ["medium"], defaultEffort: "medium" },
-  { id: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)", efforts: ["medium"], defaultEffort: "medium" },
-];
-
-const CLEAN_MODEL_OPTIONS = FAMILIES.map((f) => ({
-  value: f.id,
-  name: f.name,
-}));
+const catalog = new ModelCatalog({
+  cachePath: process.env.AGY_ACP_MODEL_CACHE || DEFAULT_CACHE_PATH,
+  listModels: () =>
+    execFileSync(process.env.AGY_BIN || "agy", ["models"], { encoding: "utf8", timeout: 15000 }),
+});
+catalog.loadCache();
 
 function decomposeRawId(rawId) {
-  if (!rawId || typeof rawId !== "string") return { familyId: "gemini-3.8-flash", effort: "high" };
-  for (const f of FAMILIES) {
-    for (const e of f.efforts) {
-      if (rawId === `${f.id}-${e}` || (f.efforts.length === 1 && rawId === f.id)) {
-        return { familyId: f.id, effort: e };
-      }
-    }
-    if (rawId === f.id) {
-      return { familyId: f.id, effort: f.defaultEffort };
-    }
-  }
-  return { familyId: rawId, effort: "medium" };
+  return catalog.decompose(rawId, activeEffort);
 }
 
 function composeRawId(familyId, effort) {
-  const f = FAMILIES.find((cand) => cand.id === familyId);
-  if (!f) return familyId;
-  const eff = f.efforts.includes(effort) ? effort : f.defaultEffort;
-  if (f.efforts.length === 1 && f.efforts[0] === "medium" && !f.id.endsWith("-medium")) {
-    return f.id;
-  }
-  if (f.id.endsWith(`-${eff}`)) return f.id;
-  return `${f.id}-${eff}`;
+  return catalog.compose(familyId, effort);
 }
 
-let activeFamilyId = "gemini-3.8-flash";
 let activeEffort = "high";
+let activeFamilyId = catalog.families[0]?.id ?? "auto";
 const pendingRequests = new Map();
 
 function buildCleanConfigOptions(existingOptions = []) {
-  const f = FAMILIES.find((cand) => cand.id === activeFamilyId) ?? FAMILIES[0];
-  const effortOptions = f.efforts.map((e) => ({
-    value: e,
-    name: e.charAt(0).toUpperCase() + e.slice(1),
-  }));
-
-  const modelOpt = {
-    id: "model",
-    name: "Model",
-    category: "model",
-    type: "select",
-    currentValue: activeFamilyId,
-    options: CLEAN_MODEL_OPTIONS,
-  };
-
-  const thoughtOpt = {
-    id: "thought_level",
-    name: "Reasoning Effort",
-    category: "thought_level",
-    type: "select",
-    currentValue: f.efforts.includes(activeEffort) ? activeEffort : f.defaultEffort,
-    options: effortOptions,
-  };
+  catalog.learn(existingOptions);
+  const built = catalog.buildOptions(activeFamilyId, activeEffort);
+  // Nothing learned yet: show the adapter's own list rather than an empty one.
+  if (!built) return existingOptions;
 
   const otherOptions = (existingOptions || []).filter(
     (opt) =>
@@ -164,7 +121,9 @@ function buildCleanConfigOptions(existingOptions = []) {
       opt.category !== "thought_level",
   );
 
-  return [modelOpt, thoughtOpt, ...otherOptions];
+  return built.thoughtLevel
+    ? [built.model, built.thoughtLevel, ...otherOptions]
+    : [built.model, ...otherOptions];
 }
 
 function normalizeModel(model) {
@@ -194,6 +153,7 @@ function normalizeResult(result, reqMeta) {
   }
 
   if (Array.isArray(res.configOptions)) {
+    catalog.learn(res.configOptions);
     const rawModelOpt = res.configOptions.find((o) => o.id === "model" || o.category === "model");
     if (rawModelOpt?.currentValue && !reqMeta) {
       const dec = decomposeRawId(rawModelOpt.currentValue);
@@ -252,10 +212,12 @@ function normalizeInboundLine(line) {
     }
 
     if (configId === "model") {
-      const dec = decomposeRawId(value);
-      activeFamilyId = dec.familyId;
-      if (dec.effort && dec.effort !== "medium") {
-        activeEffort = dec.effort;
+      const hit = catalog.ofRaw(value);
+      if (hit) {
+        activeFamilyId = hit.family.id;
+        if (hit.effort !== "default") activeEffort = hit.effort;
+      } else {
+        activeFamilyId = value;
       }
       const rawModelId = composeRawId(activeFamilyId, activeEffort);
       if (id !== undefined) {

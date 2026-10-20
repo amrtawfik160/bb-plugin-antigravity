@@ -42,7 +42,8 @@ export const AGY_BINARY = "agy";
 /**
  * Adapter candidates, in preference order.
  *
- * `agy-acp` (shubzkothekar/antigravity-acp) is the default: it builds on the
+ * `agy-acp` (mturilin/antigravity-acp, a fork of shubzkothekar/antigravity-acp
+ * with session/fork) is the default: it builds on the
  * official `@agentclientprotocol/sdk`, ships signed release binaries, and
  * delegates auth to the `agy` binary it is pointed at.
  *
@@ -55,7 +56,7 @@ export const ADAPTER_BINARIES = ["agy-acp", "agy-acp.exe", "agy-agent-acp"] as c
 export const ADAPTER_BINARY = ADAPTER_BINARIES[0];
 export const ADAPTER_INSTALL_HINT =
   "The plugin downloads agy-acp into ~/.local/bin on enable. " +
-  "To do it yourself: https://github.com/shubzkothekar/antigravity-acp/releases";
+  "To do it yourself: https://github.com/mturilin/antigravity-acp/releases";
 export const LOGO_FILE_NAME = "antigravity-acp.svg";
 export const SHIM_FILE_NAME = "antigravity-acp-shim.mjs";
 
@@ -232,18 +233,21 @@ export async function installShim(
       `Could not install the ACP compatibility shim into ${destination}.`,
     );
   }
-  const policyCopied = await copyAsset(
-    pluginRoot,
-    path.join("shim", "continue-policy.mjs"),
-    path.join(dataDir, "continue-policy.mjs"),
-  );
-  if (!policyCopied) {
-    throw new Error(
-      `Could not install continue-policy.mjs next to ${destination}.`,
+  // Modules the shim imports; they must sit next to it in the data dir.
+  for (const helper of SHIM_HELPER_FILES) {
+    const helperCopied = await copyAsset(
+      pluginRoot,
+      path.join("shim", helper),
+      path.join(dataDir, helper),
     );
+    if (!helperCopied) {
+      throw new Error(`Could not install ${helper} next to ${destination}.`);
+    }
   }
   return destination;
 }
+
+export const SHIM_HELPER_FILES = ["continue-policy.mjs", "model-families.mjs"] as const;
 
 /**
  * `pluginRoot` is the directory of the loaded module: the plugin root when bb
