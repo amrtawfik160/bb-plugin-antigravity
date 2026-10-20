@@ -42,7 +42,8 @@ export const AGY_BINARY = "agy";
 /**
  * Adapter candidates, in preference order.
  *
- * `agy-acp` (shubzkothekar/antigravity-acp) is the default: it builds on the
+ * `agy-acp` (mturilin/antigravity-acp, a fork of shubzkothekar/antigravity-acp
+ * with session/fork) is the default: it builds on the
  * official `@agentclientprotocol/sdk`, ships signed release binaries, and
  * delegates auth to the `agy` binary it is pointed at.
  *
@@ -55,7 +56,7 @@ export const ADAPTER_BINARIES = ["agy-acp", "agy-acp.exe", "agy-agent-acp"] as c
 export const ADAPTER_BINARY = ADAPTER_BINARIES[0];
 export const ADAPTER_INSTALL_HINT =
   "The plugin downloads agy-acp into ~/.local/bin on enable. " +
-  "To do it yourself: https://github.com/shubzkothekar/antigravity-acp/releases";
+  "To do it yourself: https://github.com/mturilin/antigravity-acp/releases";
 export const LOGO_FILE_NAME = "antigravity-acp.svg";
 export const SHIM_FILE_NAME = "antigravity-acp-shim.mjs";
 
